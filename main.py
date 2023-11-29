@@ -1,285 +1,130 @@
+# Setting the parameters for anonymization
+k_value = 45          # K-anonymity
+l_value = 2           # L-closeness
+t_value = 0           # T-diversity
+epsilon_value = 0.5   
+delta_value = 0.001   
 
-"""# Anonymization parameters #"""
-k = 45           # K-anonymity
-l = 2           # L-closeness
-t = 0           # T-diversity
-epsilon = 0.5   # Epsilon for Differential Privacy
-delta = 0.001   # Delta for Differential Privacy
-
-
-# Just to color the outputs
-class Colors:
-    """ ANSI color codes """
-    BLACK           = "\033[0;30m"
-    RED             = "\033[0;31m"
-    GREEN           = "\033[0;32m"
-    BROWN           = "\033[0;33m"
-    BLUE            = "\033[0;34m"
-    PURPLE          = "\033[0;35m"
-    CYAN            = "\033[0;36m"
-    LIGHT_GRAY      = "\033[0;37m"
-    DARK_GRAY       = "\033[1;30m"
-    LIGHT_RED       = "\033[1;31m"
-    LIGHT_GREEN     = "\033[1;32m"
-    YELLOW          = "\033[1;33m"
-    LIGHT_BLUE      = "\033[1;34m"
-    LIGHT_PURPLE    = "\033[1;35m"
-    LIGHT_CYAN      = "\033[1;36m"
-    LIGHT_WHITE     = "\033[1;37m"
-    BOLD            = "\033[1m"
-    FAINT           = "\033[2m"
-    ITALIC          = "\033[3m"
-    UNDERLINE       = "\033[4m"
-    BLINK           = "\033[5m"
-    NEGATIVE        = "\033[7m"
-    CROSSED         = "\033[9m"
-    END             = "\033[0m"
-
-
-
-
-#
-# Load Dataset
-# ------------
-
+# Loading the Dataset
 import numpy as np
 import pandas as pd
 
+# Loading the dataset into memory
+dataset_path = "data_sample.csv" 
+df = pd.read_csv(dataset_path, sep=",", engine="python")
 
-# Load the dataset into memory
-dataset_path = "adult.sample.csv" #input("Input Dataset Path: ") 
-df = pd.read_csv(dataset_path, sep=",", engine="python");
+print("Total number of rows in the dataset:", len(df))
 
-print(" Total number of rows in dataset: ", len(df))
+# Check the dataset parsing
+print(df.head())
+check_dataset = input("\nQ> Is the dataset properly parsed? (y/n): ")
+if check_dataset.lower() == "n":
+    print("[Error: Dataset parsing is incorrect!")
+    exit(0)
 
-
-# Check if the dataset is parsed properly
-print (df.head())
-
-stepCheck = input ("\nQ> Is your dataset parsed properly? (y/n): ")
-if (stepCheck == "n" or stepCheck == "N"):
-    print("[Error] Dataset parsing is wrong!")
-    exit(0) 
-
-#Data Preprocessing
+# Preprocessing the data
 df.dropna(axis=0, inplace=True)
-print(" Total number of rows after pre-processing: ", len(df))
+print("After pre-processing, the total number of rows is:", len(df))
 
-
-
-
-# 
-# Collect Attribute Details
-# -------------------------
-
+# Collecting the sttribute details
 attributes = dict()
 for col in df.columns:
-    print ("\nAttribute : '%s'" % col)
-
+    print("\nAttribute: '%s'" % col)
     while True:
-        print ("\n\t1. Identifier\n\t2. Quasi-identifier\n\t3. Sensitive\n\t4. Insensitive")
-        ch = int(input ("Q> Please select the attribute type: "))
-        if ch not in [1, 2, 3, 4]:
-            print("[Error] Please enter a value 1,2,3 or 4!")
+        print("\n\t1. Identifier\n\t2. Quasi-identifier\n\t3. Sensitive\n\t4. Insensitive")
+        choice = int(input("Q> Please select the attribute type: "))
+        if choice not in [1, 2, 3, 4]:
+            print("[Error] Please enter a value 1, 2, 3, or 4!")
         else:
             break
-    
-    attributes[col] = {
-        'dataType': df[col].dtype, 
-        'attributeType': ["Identifier", "Quasi-identifier", "Sensitive", "Insensitive"][ch-1]
-    }
-    
-    if (df[col].dtype.name == "object"):
+    attributes[col] = {'dataType': df[col].dtype, 'attributeType': ["Identifier", "Quasi-identifier", "Sensitive", "Insensitive"][choice-1]}
+    if df[col].dtype.name == "object":
         df[col] = df[col].astype("category")
 
+# For DP stats calculation, a copy of the dataset is made
+orig_df = df.copy()
 
+qi_index = [list(orig_df.columns).index(attr) for attr in attributes if attributes[attr]['attributeType'] == "Quasi-identifier"]
+feature_columns = [attr for attr in attributes if attributes[attr]['attributeType'] == "Quasi-identifier"]
+sensitive_column = [attr for attr in attributes if attributes[attr]['attributeType'] == "Sensitive"]
 
-# Making a copy of the dataset for the DP stats calculation
-OrigDF = df.copy()
-
-
-
-# Some datastructures for computational easiness
-qi_index = list()
-feature_columns = list()
-sensitive_column = list()
-
-for attribute in attributes:
-    if attributes[attribute]['attributeType'] == "Quasi-identifier":
-        feature_columns.append(attribute)
-        qi_index.append(list(OrigDF.columns).index(attribute))
-    elif attributes[attribute]['attributeType'] == "Sensitive":
-        sensitive_column.append(attribute)
-
-feature_columns =  feature_columns if (len(feature_columns) > 0) else None
-sensitive_column = sensitive_column[0] if (len(sensitive_column) > 0) else None
-
-
-
-# 
-# Predict Parameter Ranges
-# ------------------------
-
-from algorithms.param_predictor import ParamPredictor
-
-res = (ParamPredictor()).predict(df, qi_index, sensitive_column)
-print(f" - The nominal value for k is : {res['k']}")
-print(f" - The l value should be within the range : [{res['l'][0]}, {res['l'][1]}]")
-print(f" - The t value should be within the range : [{res['t']:.2f}, {0.0})")
-
-
-
-
-
-# ----------------------------------------------------------- Anonymization ------------------------------------------------------- #
-
-#
-# Supress direct identifiers with '*'
-# -----------------------------------
-
+# Anonymization
 for attribute in attributes:
     if attributes[attribute]['attributeType'] == "Identifier":
         df[attribute] = '*'
 
-
-
-#
 # Generalizing quasi-identifiers with k-anonymity
-# -----------------------------------------------
-
 from algorithms.anonymizer import Anonymizer
 
+# Check for any quasi-identifiers
+quasi = any(attributes[attr]['attributeType'] == "Quasi-identifier" for attr in attributes)
 
-# Check if there are any quasi-identifiers
-quasi = False
-for attribute in attributes:
-    if attributes[attribute]['attributeType'] == "Quasi-identifier":
-        quasi = True
-
-
-assert quasi, "No Quasi-identifier found! At least 1 quasi-identifier is required."
+assert quasi, "Quasi-identifier not found! At least 1 quasi-identifier is required."
 
 anon = Anonymizer(df, attributes)
-anonymizedDF = anon.anonymize(k, l, t)
+anonymized_df = anon.anonymize(k_value, l_value, t_value)
 
 
-#
-# Insenstitive attributes are left unchanged
-# ------------------------------------------
-# No code required for this :)
-
-
-#
-# Differentially private statistical attributes of the dataset 
-# ------------------------------------------------------------
-"""
-from diffPriv.stats import DPStats
-
-dp = DPStats(epsilon, delta)
-
-DP_out = pd.DataFrame(columns=['Property', 'Value'])
-
-for attribute in attributes:
-    
-    # Stats for numbers only
-    if attributes[attribute]['dataType'] not in [np.dtype('int64'), np.dtype('float64')]:
-        continue
-
-    if not attributes[attribute]['attributeType'] == 'Identifier':
-        # try: 
-            DP_out.loc[len(DP_out.index)] = [attribute, '']
-            DP_out.loc[len(DP_out.index)] = ['Mean', dp.BoundedMean(OrigDF[attribute])]
-            DP_out.loc[len(DP_out.index)] = ['Sum', dp.BoundedSum(OrigDF[attribute])]
-            DP_out.loc[len(DP_out.index)] = ['Standard Deviation', dp.BoundedStandardDeviation(OrigDF[attribute])]
-            DP_out.loc[len(DP_out.index)] = ['Variance', dp.BoundedVariance(OrigDF[attribute])]
-            DP_out.loc[len(DP_out.index)] = ['Min', dp.Min(OrigDF[attribute])]
-            DP_out.loc[len(DP_out.index)] = ['Max', dp.Max(OrigDF[attribute])]
-            DP_out.loc[len(DP_out.index)] = ['Median', dp.Median(OrigDF[attribute])]
-            DP_out.loc[len(DP_out.index)] = ['Count', dp.Count(OrigDF[attribute])]
-        # except:
-            # continue
-
-"""
-
-# Utility Measure
+# Utility Measures
 from utility.DiscernMetric import DM
 from utility.CavgMetric import CAVG
 from utility.GenILossMetric import GenILoss
 
-qi_index = list()
-for attribute in attributes:
-    if attributes[attribute]['attributeType'] == "Quasi-identifier":
-        qi_index.append(list(OrigDF.columns).index(attribute))
+print("\n--------- Utility Metrics ---------\n")
 
-
-
-
-print("\n --------- Utility Metrices --------- \n")
-# Discernibility Metric
-raw_dm = DM(OrigDF, qi_index, k)
+raw_dm = DM(orig_df, qi_index, k_value)
 raw_dm_score = raw_dm.compute_score()
 
-anon_dm = DM(anonymizedDF, qi_index, k)
+anon_dm = DM(anonymized_df, qi_index, k_value)
 anon_dm_score = anon_dm.compute_score()
 
 print(f"DM score (lower is better): \n  BEFORE: {raw_dm_score} || AFTER: {anon_dm_score} || {raw_dm_score > anon_dm_score}")
 
 # Average Equivalence Class
-raw_cavg = CAVG(OrigDF, qi_index, k)
-raw_cavg_score = raw_cavg.compute_score()
+cavg_raw = CAVG(orig_df, qi_index, k_value)
+cavg_raw_score = cavg_raw.compute_score()
 
-anon_cavg = CAVG(anonymizedDF, qi_index, k)
-anon_cavg_score = anon_cavg.compute_score()
+cavg_anon = CAVG(anonymized_df, qi_index, k_value)
+cavg_anon_score = cavg_anon.compute_score()
 
 import math
-print(f"CAVG score (near 1 is better): \n  BEFORE: {raw_cavg_score:.3f} || AFTER: {anon_cavg_score:.3f} || {math.fabs(1-raw_cavg_score) > math.fabs(1-anon_cavg_score)}")
+print(f"CAVG SCORE (near 1 is better): \n  BEFORE: {cavg_raw_score:.3f} || AFTER: {cavg_anon_score:.3f} || {math.fabs(1-cavg_raw_score) > math.fabs(1-cavg_anon_score)}")
 
-# Gen I Loss Metric
-GILoss = GenILoss(OrigDF, feature_columns)
-geniloss_score = GILoss.calculate(anonymizedDF)
+# Loss metric gen i
+geniloss = GenILoss(orig_df, feature_columns)
+geniloss_score = geniloss.calculate(anonymized_df)
 
-print(f"GenILoss: [0: No transformation, 1: Full supression] \n Value: {geniloss_score}")
+print(f"GenILoss: [0: No transformation, 1: Full suppression] \n Value: {geniloss_score}")
 
-
-
-#
-# Exporting data
-# --------------
-
-# anonymizedDF.to_csv(export_path+'.csv', index=False)
-ch = input("Do you want to export the anonymized dataset (y/n): ")
-if not (ch == 'y' or ch == ''):
+# Exporting the data
+export_path = "AnonymizedData"
+export_choice = input("Do you want to export the anonymized dataset (y/n): ")
+if export_choice.lower() != 'y':
     exit(0)
 
+print("\nExporting the anonymized dataset........ ")
 
-export_path = "AnonymizedData"
-print("\nExporting anonymized dataset ... ")
-
-
-# Create a Pandas Excel writer object using XlsxWriter as the engine.
+# using XlsxWriter as the engine for createing a pandas excel writer object.
 writer = pd.ExcelWriter(export_path + '.xlsx')
 
-
-qi_index = list()
-for attribute in attributes:
-    if attributes[attribute]['attributeType'] == "Quasi-identifier":
-        qi_index.append(list(OrigDF.columns).index(attribute))
-
+qi_index = [list(orig_df.columns).index(attr) for attr in attributes if attributes[attr]['attributeType'] == "Quasi-identifier"]
 
 def paint_bg(v, color):
-    ret = [f"background-color: {color[0]};" for i in v]
-    return ret
+    return [f"background-color: {color[0]};" for i in v]
 
-anonymizedDF = anonymizedDF.style.hide_index().apply(paint_bg, color=['gainsboro', 'ivory'], axis=1) 
+# Hide the index by setting it to a new column
+anonymized_df = anonymized_df.reset_index(drop=True)
+
+# Apply styling to the Styler object with background colors
+anonymized_df = anonymized_df.style.apply(paint_bg, color=['gainsboro', 'ivory'], axis=1)
+
+# Writing the anonymized dataframes to the Excel worksheet.
+anonymized_df.to_excel(writer, sheet_name='Data', index=False)
+
+writer._save()
 
 
-# Write a dataframe to the worksheet.
-anonymizedDF.to_excel(writer, sheet_name ='Data', index=False)
-# DP_out.to_excel(writer, sheet_name ='Stats', index=False)
 
-# print(DP_out)
 
-# Close the Pandas Excel writer object and output the Excel file.
-writer.save()
 
 
